@@ -1,3 +1,4 @@
+import "../suppress-dep0060.js"; // Must run before matrix-bot-sdk loads htmlencode
 import type { ILogger } from "matrix-bot-sdk";
 import {
   AutojoinRoomsMixin,
@@ -76,7 +77,6 @@ export class MatrixProvider implements ITransportProvider {
           "msg-bridge-matrix-crypto"
         );
         cryptoProvider = new RustSdkCryptoStorageProvider(cryptoStorePath, RustSdkCryptoStoreType.Sqlite);
-        console.log("[Matrix] E2EE crypto storage enabled (Rust/SQLite)");
       } catch (err) {
         console.warn("[Matrix] E2EE crypto not available, continuing without encryption:", (err as Error).message);
       }
@@ -128,7 +128,12 @@ export class MatrixProvider implements ITransportProvider {
       // noise. A filtering logger suppresses only these specific patterns.
       const defaultLogger = new RichConsoleLogger();
       const syncFilterLogger: ILogger = {
-        info:  (mod, ...args) => defaultLogger.info(mod, ...args),
+        info:  (mod, ...args) => {
+          const msg = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
+          if (mod === "CryptoClient" && msg.includes("Starting with device")) return;
+          if (mod === "MatrixClientLite" && msg.includes("encryption enabled")) return;
+          defaultLogger.info(mod, ...args);
+        },
         warn:  (mod, ...args) => defaultLogger.warn(mod, ...args),
         debug: (mod, ...args) => defaultLogger.debug(mod, ...args),
         trace: (mod, ...args) => defaultLogger.trace(mod, ...args),
