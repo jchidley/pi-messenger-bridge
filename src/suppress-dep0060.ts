@@ -11,5 +11,5 @@ process.emitWarning = ((...args: unknown[]) => {
       : undefined);
 
   if (code === "DEP0060") return;
-  return (originalEmitWarning as Function)(...args);
+  return Reflect.apply(originalEmitWarning, process, args);
 }) as typeof process.emitWarning;

@@ -46,7 +46,7 @@ describe('config', () => {
     expect(loaded.debug).toBe(false);
   });
 
-  it('creates .pi directory with 700 permissions', async () => {
+  it.skipIf(process.platform === "win32")('creates .pi directory with 700 permissions', async () => {
     const { saveConfig } = await importConfig();
     saveConfig({});
 
@@ -54,7 +54,7 @@ describe('config', () => {
     expect(stats.mode & 0o777).toBe(0o700);
   });
 
-  it('writes config file with 600 permissions', async () => {
+  it.skipIf(process.platform === "win32")('writes config file with 600 permissions', async () => {
     const { saveConfig } = await importConfig();
     saveConfig({});
 

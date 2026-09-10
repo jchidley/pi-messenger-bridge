@@ -89,43 +89,40 @@ export class MatrixProvider implements ITransportProvider {
       cryptoProvider
     );
 
-    // Auto-join rooms the bot is invited to
-    AutojoinRoomsMixin.setupOnClient(this.client);
-
-    // Cache bot user ID (never changes)
-    this.botUserId = await this.client.getUserId();
-
-    // Track room membership and member counts
-    this.client.on("room.join", (roomId: string) => {
-      this.joinedRooms.add(roomId);
-      // Refresh member count asynchronously
-      this.client?.getJoinedRoomMembers(roomId)
-        .then(members => this.roomMemberCount.set(roomId, members.length))
-        .catch(() => {});
-    });
-    this.client.on("room.leave", (roomId: string) => {
-      this.joinedRooms.delete(roomId);
-      this.roomMemberCount.delete(roomId);
-    });
-
-    // Handle incoming messages
-    this.client.on("room.message", async (roomId: string, event: any) => {
-      try {
-        await this.handleMessage(roomId, event);
-      } catch (err) {
-        if (this.errorHandler) {
-          this.errorHandler(err as Error);
-        }
-      }
-    });
-
     try {
+      // Auto-join rooms the bot is invited to
+      AutojoinRoomsMixin.setupOnClient(this.client);
+
+      // Cache bot user ID (never changes)
+      this.botUserId = await this.client.getUserId();
+
+      // Track room membership and member counts
+      this.client.on("room.join", (roomId: string) => {
+        this.joinedRooms.add(roomId);
+        // Refresh member count asynchronously
+        this.client?.getJoinedRoomMembers(roomId)
+          .then(members => this.roomMemberCount.set(roomId, members.length))
+          .catch(() => {});
+      });
+      this.client.on("room.leave", (roomId: string) => {
+        this.joinedRooms.delete(roomId);
+        this.roomMemberCount.delete(roomId);
+      });
+
+      // Handle incoming messages
+      this.client.on("room.message", async (roomId: string, event: any) => {
+        try {
+          await this.handleMessage(roomId, event);
+        } catch (err) {
+          if (this.errorHandler) {
+            this.errorHandler(err as Error);
+          }
+        }
+      });
+
       // During initial sync the SDK replays historical events and tries to
-      // decrypt them. For E2EE rooms this produces two known error patterns:
-      //   1. "Decryption error" — old messages we don't have keys for
-      //   2. "M_NOT_FOUND"     — stale sync token references a purged event
-      // Our connectedAt filter skips these events anyway, so the errors are
-      // noise. A filtering logger suppresses only these specific patterns.
+      // decrypt them. Suppress only known startup noise, then always restore
+      // normal logging even when startup fails.
       const defaultLogger = new RichConsoleLogger();
       const syncFilterLogger: ILogger = {
         info:  (mod, ...args) => {
@@ -145,36 +142,42 @@ export class MatrixProvider implements ITransportProvider {
         },
       };
       LogService.setLogger(syncFilterLogger);
+      try {
+        await this.client.start();
+      } finally {
+        LogService.setLogger(defaultLogger);
+      }
 
-      await this.client.start();
-
-      // Restore default logging — real errors after sync should not be filtered
-      LogService.setLogger(defaultLogger);
+      // Seed joined rooms and member count caches
+      const rooms = await this.client.getJoinedRooms();
+      this.joinedRooms = new Set(rooms);
+      await Promise.all(rooms.map(async (roomId) => {
+        try {
+          const members = await this.client!.getJoinedRoomMembers(roomId);
+          this.roomMemberCount.set(roomId, members.length);
+        } catch {
+          // Will be fetched on first message if needed
+        }
+      }));
+      this.connectedAt = Date.now();
+      this._isConnected = true;
+      const cryptoStatus = cryptoProvider ? "E2EE enabled" : "E2EE disabled";
+      console.log(`✅ Matrix connected as ${this.botUserId} (${rooms.length} rooms, ${cryptoStatus})`);
     } catch (error) {
-      // Clean up dangling state so connect() can be retried
+      try {
+        this.client?.stop();
+      } catch {
+        // Preserve the original connection error.
+      }
+      this._isConnected = false;
       this.client = undefined;
       this.botUserId = undefined;
       this.joinedRooms.clear();
       this.roomMemberCount.clear();
+      this.connectedAt = 0;
       console.error("[Matrix] Failed to connect:", error);
       throw error;
     }
-
-    // Seed joined rooms and member count caches
-    const rooms = await this.client.getJoinedRooms();
-    this.joinedRooms = new Set(rooms);
-    await Promise.all(rooms.map(async (roomId) => {
-      try {
-        const members = await this.client!.getJoinedRoomMembers(roomId);
-        this.roomMemberCount.set(roomId, members.length);
-      } catch {
-        // Will be fetched on first message if needed
-      }
-    }));
-    this.connectedAt = Date.now();
-    this._isConnected = true;
-    const cryptoStatus = cryptoProvider ? "E2EE enabled" : "E2EE disabled";
-    console.log(`✅ Matrix connected as ${this.botUserId} (${rooms.length} rooms, ${cryptoStatus})`);
   }
 
   async disconnect(): Promise<void> {
